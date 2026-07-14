@@ -145,3 +145,58 @@ tbody tr:hover { background: rgba(110, 168, 254, 0.06); }
 
 .footer { color: var(--muted); font-size: 12.5px; margin-top: 34px; text-align: center; }
 .footer a { color: var(--accent); text-decoration: none; }
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 14px 0 0;
+  font-size: 13.5px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.link-btn:hover { filter: brightness(1.1); }
+
+.badge {
+  display: inline-block;
+  background: rgba(87, 224, 176, 0.1);
+  border: 1px solid rgba(87, 224, 176, 0.35);
+  color: var(--accent-2);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.schema-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.schema-table {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.schema-table-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.schema-table-note { color: var(--muted); font-size: 11.5px; margin: 3px 0 8px; }
+.schema-table ul { list-style: none; margin: 0; padding: 0; }
+.schema-table li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.col-name { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--text); }
+.col-type { color: var(--accent-2); font-size: 11px; }
+.col-note { color: var(--muted); font-size: 11px; width: 100%; }

@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateSql } from "@/lib/groq";
-import { guardSql } from "@/lib/sql-guard";
-import { runReadOnly } from "@/lib/db";
+import { answerQuestion } from "@/lib/agent";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -22,32 +20,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Question is too long (max 500 chars)." }, { status: 400 });
   }
 
-  // 1. Ask the LLM for SQL.
-  let rawSql: string;
-  try {
-    rawSql = await generateSql(question);
-  } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 502 });
-  }
+  const result = await answerQuestion(question);
 
-  // 2. Validate it is a safe, single, read-only SELECT.
-  const guard = guardSql(rawSql);
-  if (!guard.ok) {
+  if (!result.ok) {
     return NextResponse.json(
-      { error: guard.error, sql: rawSql },
+      { error: result.error, sql: result.sql, attempts: result.attempts, corrections: result.corrections },
       { status: 400 }
     );
   }
 
-  // 3. Execute read-only against Postgres.
-  try {
-    const rows = await runReadOnly(guard.sql);
-    const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
-    return NextResponse.json({ sql: guard.sql, rows, columns, rowCount: rows.length });
-  } catch (e) {
-    return NextResponse.json(
-      { error: `SQL execution failed: ${(e as Error).message}`, sql: guard.sql },
-      { status: 400 }
-    );
-  }
+  return NextResponse.json({
+    sql: result.sql,
+    rows: result.rows,
+    columns: result.columns,
+    rowCount: result.rowCount,
+    attempts: result.attempts,
+    corrections: result.corrections,
+  });
 }

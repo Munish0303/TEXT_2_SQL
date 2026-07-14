@@ -16,39 +16,88 @@ RULES
 
 ${SCHEMA_PROMPT}`;
 
-export async function generateSql(question: string): Promise<string> {
+export type GenerateArgs = {
+  question: string;
+  // When present, ask the model to REPAIR a previous attempt that failed.
+  previousSql?: string;
+  error?: string;
+};
+
+function buildUserMessage({ question, previousSql, error }: GenerateArgs): string {
+  if (previousSql && error) {
+    return [
+      `Your previous SQL for this question failed. Fix it and return only the corrected query.`,
+      ``,
+      `Question: ${question}`,
+      ``,
+      `Previous SQL:`,
+      previousSql,
+      ``,
+      `Error: ${error}`,
+      ``,
+      `Return ONE corrected PostgreSQL SELECT query. Output only the SQL, no explanation.`,
+    ].join("\n");
+  }
+  return question;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Groq's free tier is rate-limited (tokens/minute). On 429 we wait the amount
+// Groq tells us to and retry, so a burst of requests degrades gracefully.
+function retryDelayMs(res: Response, body: string): number {
+  const header = res.headers.get("retry-after");
+  if (header && !Number.isNaN(Number(header))) return Number(header) * 1000;
+  const m = body.match(/try again in ([\d.]+)\s*(ms|s)/i);
+  if (m) return m[2].toLowerCase() === "ms" ? Number(m[1]) : Number(m[1]) * 1000;
+  return 3000;
+}
+
+export async function generateSql(args: GenerateArgs): Promise<string> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     throw new Error("GROQ_API_KEY is not set. Get a free key at https://console.groq.com/keys");
   }
   const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+  const MAX_RETRIES = 4;
 
-  const res = await fetch(GROQ_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      max_tokens: 700,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: question },
-      ],
-    }),
-  });
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch(GROQ_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        max_tokens: 700,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: buildUserMessage(args) },
+        ],
+      }),
+    });
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Groq API error (${res.status}): ${text.slice(0, 300)}`);
+    if (res.status === 429 && attempt < MAX_RETRIES) {
+      const body = await res.text().catch(() => "");
+      const wait = Math.min(retryDelayMs(res, body) + 250, 15000);
+      await sleep(wait);
+      continue;
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Groq API error (${res.status}): ${text.slice(0, 300)}`);
+    }
+
+    const data = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    const content = data.choices?.[0]?.message?.content?.trim();
+    if (!content) throw new Error("Groq returned an empty response.");
+    return content;
   }
 
-  const data = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const content = data.choices?.[0]?.message?.content?.trim();
-  if (!content) throw new Error("Groq returned an empty response.");
-  return content;
+  throw new Error("Groq API rate limit: exceeded retries. Try again in a moment.");
 }

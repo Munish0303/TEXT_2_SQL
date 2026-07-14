@@ -7,7 +7,11 @@ questions in plain English. A free Groq-hosted Llama model writes the PostgreSQL
 - **Frontend + API:** Next.js (App Router), deployed on Vercel
 - **LLM:** Groq (`llama-3.3-70b-versatile`) — free API key, key stays server-side so visitors need nothing
 - **Database:** Supabase Postgres (geolocation table excluded)
+- **Self-correcting agent:** if the generated SQL is invalid or errors, the failure is fed back to the model to fix and retry (up to 3 attempts)
+- **Evaluation harness:** 25 gold questions with reference SQL, measuring execution accuracy (`npm run eval` → **25/25, 100%**)
+- **On-site schema viewer:** a "View database schema" panel so users can phrase their own questions
 - **Safety:** only single `SELECT`/`WITH` statements, forbidden-keyword guard, and a read-only transaction with a statement timeout
+- **Rate-limit handling:** Groq 429s are retried with backoff
 
 ---
 
@@ -71,25 +75,41 @@ Open http://localhost:3000 and ask something like *"Top 10 product categories by
 ## How it works
 
 ```
-Question ─▶ /api/query ─▶ Groq (schema in prompt) ─▶ raw SQL
+Question ─▶ /api/query ─▶ answerQuestion()  (self-correcting agent)
                               │
-                              ▼
-                    guardSql()  single SELECT only, no DDL/DML, auto-LIMIT
-                              │
-                              ▼
-                 runReadOnly()  READ ONLY txn + 10s statement timeout
-                              │
-                              ▼
-                     rows ─▶ table in the UI (+ the generated SQL)
+              ┌───────────────┴────────────────┐
+              ▼                                 │
+   Groq (schema in prompt) ─▶ raw SQL           │ on failure, feed the
+              │                                 │ SQL + error back and
+              ▼                                 │ retry (max 3 attempts)
+   guardSql()  single SELECT, no DDL/DML, auto-LIMIT
+              │                                 │
+              ▼                                 │
+   runReadOnly()  READ ONLY txn + 10s timeout ──┘ (errors trigger a retry)
+              │
+              ▼
+   rows ─▶ table in the UI (+ SQL, + "self-corrected" badge if it retried)
 ```
 
-- `lib/schema.ts` — the schema description given to the model
-- `lib/groq.ts` — Groq call
+- `lib/schema.ts` — schema description for the model + structured `SCHEMA_TABLES` for the viewer
+- `lib/groq.ts` — Groq call (generate + repair modes, 429 backoff)
 - `lib/sql-guard.ts` — validation / SELECT-only enforcement
+- `lib/agent.ts` — the self-correcting generate → validate → run → retry loop
 - `lib/db.ts` — Postgres client + read-only executor
 - `app/api/query/route.ts` — the endpoint
-- `app/page.tsx` — the UI
+- `app/page.tsx` — the UI (question box, schema viewer, results)
 - `scripts/load_data.mjs` + `scripts/schema.sql` — the data loader
+- `scripts/eval.ts` — the evaluation harness
+
+## Evaluation
+
+```bash
+npm run eval
+```
+
+Runs 25 questions, comparing the agent's SQL result against a hand-written reference query
+(*execution accuracy* — the standard text-to-SQL metric). Reports overall accuracy and how
+many needed a self-correction retry. Current result: **25/25 (100%)**.
 
 ## Notes & limits
 
